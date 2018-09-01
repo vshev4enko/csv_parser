@@ -4,66 +4,90 @@
 %%% @doc
 %%%
 %%% @end
-%%% Created : 06. Aug 2018 23:20
+%%% Created : 21. Aug 2018 05:55
 %%%-------------------------------------------------------------------
 -module(csv_parser).
 -author("vshev4enko").
 
 %% API
--export([parse/1, timeit/2, parse_body/1]).
+-export([process_csv/3]).
 
-%%init() ->
-%%  ets:new(?MODULE, [set, public,named_table]).
-%%
-%%save_to_ets(Proplist) ->
-%%  ok.
+-record(state, {
+  current_line = [],
+  buffer = <<>>,
+  process_fun,
+  process_fun_state
+}).
 
+process_csv(IoDevice, ProcessFun, InitFunState) ->
+  InitState = #state{
+    process_fun = ProcessFun,
+    process_fun_state = InitFunState
+  },
+  stream_from_io_device(IoDevice, InitState).
 
 %%%-------------------------------------------------------------------
-%%% parser:timeit(fun parser:parse/1, ["example.csv"]).
+%%% Internal function
 %%%-------------------------------------------------------------------
-timeit(F, Args) ->
-  {_, S, MS} = os:timestamp(),
-  erlang:apply(F, Args),
-  {_, S2, MS2} = os:timestamp(),
-  {S2 - S, MS2 - MS}.
+stream_from_io_device(IoDevice, InitState) ->
+  IoDevIterator =
+    fun(Io) ->
+      {io:get_chars(Io, "", 1), Io}
+    end,
+  iterate(IoDevIterator, IoDevice, InitState).
 
+iterate(IteratorFun, IoSource, State) ->
+  {FirstChar, NewIoSource} = IteratorFun(IoSource),
+  iterate(IteratorFun, NewIoSource, State, FirstChar).
 
-parse(File) ->
-  case file:read_file(File) of
-    {ok, Bin} ->
-      parse_bin(Bin);
-    Res ->
-      Res
-  end.
+iterate(_, _, State, eof) ->
+  end_parse(State);
+iterate(IteratorFun, IoSource, State, Char) ->
+  NewState = process_char(Char, State),
+  {FirstChar, NewIoSource} = IteratorFun(IoSource),
+  iterate(IteratorFun, NewIoSource, NewState, FirstChar).
 
-parse_bin(Bin) when is_binary(Bin) ->
-  {ok, _Body, Headers} = parse_headers(Bin),
-  {ok, _Res} = parse_body(_Body),
-  io:format("\nheaders : ~p\n", [Headers]).
+end_parse(
+    #state{
+      current_line = Line,
+      buffer = Buffer,
+      process_fun = ProcessFun,
+      process_fun_state = ProcessFunState
+    }) ->
+  NewLine = lists:reverse([Buffer | Line]),
+  {ok, process_fun(ProcessFun, {eof, NewLine}, ProcessFunState)}.
 
-parse_headers(Bin) ->
-  parse_headers(Bin, <<>>, []).
-parse_headers(<<$\r, Bin/binary>>, Buf, Acc) ->
-  {ok, Bin, lists:reverse([Buf | Acc])};
-parse_headers(<<$\n, Bin/binary>>, Buf, Acc) ->
-  {ok, Bin, lists:reverse([Buf | Acc])};
-parse_headers(<<$,, Bin/binary>>, Buf, Acc) ->
-  parse_headers(Bin, <<>>, [Buf | Acc]);
-parse_headers(<<X, Bin/binary>>, Buf, Acc) ->
-  parse_headers(Bin, <<Buf/binary, X>>, Acc).
+process_char(<<$">>, State) ->
+  State;
+process_char(<<$\r>>, State) ->
+  State;
+process_char(<<$,>>,
+    #state{
+      current_line = Line,
+      buffer = Buffer
+    } = State) ->
+  State#state{
+    buffer = <<>>,
+    current_line = [Buffer | Line]
+  };
+process_char(<<$\n>>,
+    #state{
+      current_line = Line,
+      buffer = Buffer,
+      process_fun = ProcessFun,
+      process_fun_state = ProcessFunState
+    } = State) ->
+  NewLine = lists:reverse([Buffer | Line]),
+  NewFunState = process_fun(ProcessFun, {newline, NewLine}, ProcessFunState),
+  State#state{
+    current_line = [],
+    buffer = <<>>,
+    process_fun_state = NewFunState
+  };
+process_char(Char, #state{buffer = Buffer} = State) when is_binary(Char) ->
+  State#state{
+    buffer = <<Buffer/binary, Char/binary>>
+  }.
 
-parse_body(Body) ->
-  parse_body(Body, <<>>, [], []).
-
-parse_body(<<>>, Buf, Acc, Result) ->
-  {ok, [[Buf | Acc] | Result]};
-parse_body(<<$\r, Rest/binary>>, Buf, Acc, Result) ->
-  parse_body(Rest, <<>>, [], [[Buf | Acc] | Result]);
-parse_body(<<$\n, Rest/binary>>, Buf, Acc, Result) ->
-  parse_body(Rest, <<>>, [], [[Buf | Acc] | Result]);
-parse_body(<<$,, Rest/binary>>, Buf, Acc, Result) ->
-  parse_body(Rest, <<>>, [Buf | Acc], Result);
-parse_body(<<X, Rest/binary>>, Buf, Acc, Result) ->
-  parse_body(Rest, <<Buf/binary, X>>, Acc, Result).
-
+process_fun(ProcessFun, Line, State) ->
+  ProcessFun(Line, State).
