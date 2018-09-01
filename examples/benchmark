@@ -17,7 +17,7 @@ process(File) ->
     end,
 
     Begin = get_timestamp(),
-    {ok, ProcessedRows} = csv_bin:process_csv(IoDev, ProcessFun, 0),
+    {ok, ProcessedRows} = csv_parser:process_csv(IoDev, ProcessFun, 0),
     End = get_timestamp(),
 
     Duration = End - Begin,
