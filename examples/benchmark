@@ -1,0 +1,29 @@
+#! /usr/local/bin escript
+%%! -pa ./ebin/
+
+main(Args) ->
+    process(Args).
+
+get_timestamp() ->
+    {Megasecs, Secs, Microsecs} = erlang:timestamp(),
+    (Megasecs * 1000000) + Secs + (Microsecs / 1000000).
+
+process(File) ->
+    {ok, IoDev} = file:open(File, [read, binary]),
+
+    ProcessFun = fun(Row, Count) ->
+        io:format("--> ~p ~p~n", [Row, Count]),
+        Count + 1
+    end,
+
+    Begin = get_timestamp(),
+    {ok, ProcessedRows} = csv_bin:process_csv(IoDev, ProcessFun, 0),
+    End = get_timestamp(),
+
+    Duration = End - Begin,
+    Rate = ProcessedRows / Duration,
+
+    io:format("# processed rows ~p in ~p s~n", [ProcessedRows, Duration]),
+    io:format("Rate: ~p items/s~n", [Rate]),
+
+    ok.
