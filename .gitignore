@@ -1,0 +1,6 @@
+.idea
+*.d
+*.mk
+ebin
+files
+test
